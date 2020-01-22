@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+
+set -xeuo pipefail
+
+die() {
+  printf '%s\n' "$1" >&2
+  exit 1
+}
+
+assert_fail() {
+  # shellcheck disable=SC2181
+  if [[ $? == "0" ]]; then
+    die "ERROR: The command above should have failed"
+  fi
+}
+
+assert_ok() {
+  # shellcheck disable=SC2181
+  if [[ $? != "0" ]]; then
+    die "ERROR: The command above should have worked"
+  fi
+}
+
+psql="psql --no-psqlrc"
+db="data_sharing"
+$psql -c 'drop database if exists "'$db'"'
+$psql -c 'create database "'$db'";'
+$psql -v ON_ERROR_STOP=1 -f init.sql $db
+
+set +e
+
+# user guest can't access employees table in public schema
+$psql -U guest -c 'select * from public.employees limit 1' $db
+assert_fail
+
+# user guest can access employees_view in guest schema
+$psql -U guest -c 'select employee_id, first_name from guest.employees_view limit 1' $db
+assert_ok
+
+# there is no column pw_hash in guest.employees_view
+$psql -U guest -c 'select pw_hash from guest.employees_view limit 1' $db
+assert_fail
+
+# user guest cannot create objects in public schema
+$psql -U guest -c 'create table public.foo (id integer)' $db
+assert_fail
